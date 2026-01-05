@@ -1,0 +1,267 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum CompanyType {
+  CLIENT
+  SUPPLIER
+  PROVIDER
+}
+
+enum BudgetStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+}
+
+enum ServiceOrderStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELED
+}
+
+enum CalendarCategory {
+  OBRA
+  LICITACAO
+  ADMINISTRATIVO
+  FINANCEIRO
+  OUTROS
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(USER)
+  isActive     Boolean  @default(true)
+
+  employeeProfile EmployeeProfile?
+
+  // Auditoria reversa (opcional, mas útil)
+  createdBudgets       Budget[]        @relation("BudgetCreatedBy")
+  updatedBudgets       Budget[]        @relation("BudgetUpdatedBy")
+  createdServiceOrders ServiceOrder[]  @relation("SOCreatedBy")
+  updatedServiceOrders ServiceOrder[]  @relation("SOUpdatedBy")
+  createdCompanies     Company[]       @relation("CompanyCreatedBy")
+  updatedCompanies     Company[]       @relation("CompanyUpdatedBy")
+  createdEvents        CalendarEvent[] @relation("EventCreatedBy")
+  updatedEvents        CalendarEvent[] @relation("EventUpdatedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EmployeeProfile {
+  id         String  @id @default(cuid())
+  userId     String  @unique
+  fullName   String
+  jobTitle   String
+  phone      String?
+  department String?
+  isActive   Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  serviceOrdersResponsible ServiceOrder[] @relation("SOResponsible")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Company {
+  id           String      @id @default(cuid())
+  type         CompanyType
+  razaoSocial  String
+  nomeFantasia String?
+  cnpj         String      @unique
+  ie           String?
+
+  email String?
+  phone String?
+
+  addressLine  String?
+  number       String?
+  complement   String?
+  neighborhood String?
+  city         String?
+  state        String?
+  zipCode      String?
+
+  notes String?
+
+  contacts CompanyContact[]
+
+  // Relacionamentos de negócio
+  budgets               Budget[]       @relation("BudgetClient")
+  serviceOrdersClient   ServiceOrder[] @relation("SOClient")
+  serviceOrdersSupplier ServiceOrder[] @relation("SOSupplier")
+  serviceOrdersProvider ServiceOrder[] @relation("SOProvider")
+
+  // Auditoria
+  createdById String?
+  updatedById String?
+  createdBy   User? @relation("CompanyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User? @relation("CompanyUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([razaoSocial])
+}
+
+model CompanyContact {
+  id        String  @id @default(cuid())
+  companyId String
+  name      String
+  jobTitle  String?
+  email     String?
+  phone     String?
+  notes     String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model Budget {
+  id     String @id @default(cuid())
+  code   String @unique // WTEC-ORC-AAAA-0001
+  year   Int
+  seq    Int
+  status BudgetStatus @default(DRAFT)
+
+  clientId String
+  client   Company @relation("BudgetClient", fields: [clientId], references: [id])
+
+  // contato principal opcional (se quiser fixar um)
+  clientContactId String?
+  clientContact   CompanyContact? @relation(fields: [clientContactId], references: [id], onDelete: SetNull)
+
+  issueDate  DateTime @default(now())
+  validUntil DateTime?
+
+  notes String?
+
+  items BudgetItem[]
+
+  subtotal Decimal @db.Numeric(14, 2) @default(0)
+  total    Decimal @db.Numeric(14, 2) @default(0)
+
+  // Auditoria
+  createdById String?
+  updatedById String?
+  createdBy   User? @relation("BudgetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User? @relation("BudgetUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@index([year, seq])
+}
+
+model BudgetItem {
+  id       String @id @default(cuid())
+  budgetId String
+
+  description String
+  unit        String?
+  quantity    Decimal @db.Numeric(14, 2)
+  unitPrice   Decimal @db.Numeric(14, 2)
+  lineTotal   Decimal @db.Numeric(14, 2)
+
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([budgetId])
+}
+
+model ServiceOrder {
+  id     String             @id @default(cuid())
+  code   String             @unique // WTEC-OS-AAAA-0001
+  year   Int
+  seq    Int
+  status ServiceOrderStatus @default(OPEN)
+
+  // Ligações
+  clientId String
+  client   Company @relation("SOClient", fields: [clientId], references: [id])
+
+  supplierId String?
+  supplier   Company? @relation("SOSupplier", fields: [supplierId], references: [id], onDelete: SetNull)
+
+  providerId String?
+  provider   Company? @relation("SOProvider", fields: [providerId], references: [id], onDelete: SetNull)
+
+  responsibleEmployeeId String?
+  responsibleEmployee   EmployeeProfile? @relation("SOResponsible", fields: [responsibleEmployeeId], references: [id], onDelete: SetNull)
+
+  // Datas
+  openedAt    DateTime @default(now())
+  plannedFor  DateTime?
+  completedAt DateTime?
+
+  // Conteúdo
+  title       String
+  description String?
+  location    String?
+  notes       String?
+
+  // Auditoria
+  createdById String?
+  updatedById String?
+  createdBy   User? @relation("SOCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User? @relation("SOUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@index([year, seq])
+}
+
+model CalendarEvent {
+  id          String           @id @default(cuid())
+  title       String
+  description String?
+  category    CalendarCategory @default(OUTROS)
+
+  startAt DateTime
+  endAt   DateTime
+
+  // Responsável (opcional)
+  responsibleEmployeeId String?
+  responsibleEmployee   EmployeeProfile? @relation(fields: [responsibleEmployeeId], references: [id], onDelete: SetNull)
+
+  // Auditoria (quem criou/alterou)
+  createdById String?
+  updatedById String?
+  createdBy   User? @relation("EventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User? @relation("EventUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startAt])
+  @@index([category])
+}
